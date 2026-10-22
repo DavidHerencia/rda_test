@@ -1,0 +1,48 @@
+RDA ChatGPT v1
+
+requisitos
+- windows 10 u 11
+- python 3.10 o superior
+- google chrome estable instalado
+- acceso web a google sheets google drive y chatgpt
+
+instalacion
+1 ejecutar instalar.bat
+2 ejecutar iniciar.bat
+3 pegar la url del google sheet
+4 definir fila inicial y final
+5 definir columna de enlace columna de respuesta y columna de estado
+6 pulsar verificar sesiones
+7 si google o chatgpt piden login completarlo manualmente en chrome
+8 pulsar iniciar
+
+formato esperado del sheet
+- la columna de enlace debe contener la url completa del archivo de google drive
+- la version 1 esta pensada para archivos normales como pdf docx xlsx csv y txt
+- no se soportan todavia documentos nativos de google que requieran exportacion
+
+sesiones
+- el rda usa un perfil de chrome exclusivo
+- el perfil se guarda en %%LOCALAPPDATA%%\rda_chatgpt\chrome_profile
+- el perfil no se guarda dentro de esta carpeta ni dentro del zip
+- si una sesion expira el rda abre el servicio y solicita login manual
+- el rda no almacena usuarios ni contrasenas
+
+archivos temporales
+- las descargas se guardan temporalmente en %%TEMP%%\rda_chatgpt\downloads
+- cada carpeta temporal de fila se elimina al terminar la fila
+
+logs
+- los logs se guardan en %%LOCALAPPDATA%%\rda_chatgpt\logs
+- los logs no guardan prompts respuestas ni urls de los archivos
+
+wheelhouse
+- para preparar una instalacion sin acceso a pypi ejecutar preparar_wheelhouse.bat en una laptop equivalente con acceso
+- copiar despues la carpeta wheelhouse junto con el resto del paquete
+- instalar.bat usara wheelhouse automaticamente si contiene archivos whl
+
+prueba inicial recomendada
+- usar solo tres filas
+- usar archivos pequenos y accesibles por la misma cuenta de google
+- usar una columna de salida vacia
+- usar una columna de estado vacia

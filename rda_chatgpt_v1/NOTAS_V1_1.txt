@@ -1,0 +1,11 @@
+RDA ChatGPT v1.1
+
+cambios
+- sesion de chatgpt comprobada mediante la interfaz visible de nuevo chat
+- esperas de carga para evitar falsos negativos tras navegar
+- seleccion flexible del cuadro de escritura
+- maximo de dos solicitudes de login por verificacion
+
+nota
+la deteccion se basa en controles visibles de la interfaz, no en un servicio de autenticacion oficial
+si Google o ChatGPT cambian su interfaz, algunos selectores pueden necesitar ajustes

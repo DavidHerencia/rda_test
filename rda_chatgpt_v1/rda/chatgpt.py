@@ -8,6 +8,18 @@ from rda.chatgpt_ui import wait_for_chatgpt_prompt
 
 
 class chatgpt_client:
+    # Los selectores pueden cambiar entre versiones de la interfaz.
+    response_selectors = (
+        '[data-message-author-role="assistant"]',
+        '[data-testid^="conversation-turn"] .markdown',
+        'main .markdown',
+        'main .prose',
+    )
+    stop_pattern = re.compile(
+        r"stop|detener|parar|cancel generation|detener generación",
+        re.IGNORECASE,
+    )
+
     def __init__(self, browser, session_manager, log_callback):
         self.browser = browser
         self.session_manager = session_manager
@@ -23,7 +35,8 @@ class chatgpt_client:
         self._start_new_chat()
         self.log_callback(f"fila {row_number}: subiendo adjunto")
         self._upload_file(file_path)
-        self.log_callback(f"fila {row_number}: archivo adjuntado en chatgpt")
+        self.log_callback(f"fila {row_number}: esperando preparación del adjunto")
+        self._wait_attachment_ready()
         self.log_callback(f"fila {row_number}: enviando pregunta")
         response = self._send_prompt(prompt)
         self.log_callback(f"fila {row_number}: respuesta recibida; caracteres={len(response)}")
@@ -56,69 +69,138 @@ class chatgpt_client:
             file_input.first.wait_for(state="attached", timeout=10000)
 
         file_input.last.set_input_files(str(file_path))
+        self.log_callback("chatgpt: input de archivo recibió la ruta local")
 
         try:
             self.page.get_by_text(file_path.name, exact=False).first.wait_for(
                 state="visible",
                 timeout=30000,
             )
+            self.log_callback("chatgpt: nombre del adjunto visible")
         except PlaywrightTimeoutError:
-            # La interfaz no siempre muestra el nombre del adjunto.
-            self.log_callback("chatgpt: adjunto no confirmado visualmente")
-            self.page.wait_for_timeout(2000)
+            # La UI no siempre muestra el nombre; revisar también los estados busy.
+            self.log_callback("chatgpt: nombre del adjunto no visible; comprobando carga")
+
+    def _wait_attachment_ready(self):
+        # La desaparición de indicadores busy ayuda a evitar envíos prematuros.
+        # No demuestra procesamiento interno completo; la observación queda en el log.
+        deadline = time.monotonic() + 120
+        last_status = None
+        idle_since = None
+        while time.monotonic() < deadline:
+            busy = self.page.locator(
+                '[role="progressbar"]:visible, [aria-busy="true"]:visible'
+            ).count()
+            send_button = self.page.locator('[data-testid="send-button"]')
+            send_enabled = send_button.count() > 0 and send_button.first.is_enabled()
+            status = (busy, send_enabled)
+            if status != last_status:
+                self.log_callback(
+                    f"chatgpt: carga busy={busy}; boton_enviar_habilitado={send_enabled}"
+                )
+                last_status = status
+            if busy == 0:
+                if idle_since is None:
+                    idle_since = time.monotonic()
+                if time.monotonic() - idle_since >= 2:
+                    self.log_callback("chatgpt: sin indicadores visibles de carga")
+                    return
+            else:
+                idle_since = None
+            self.page.wait_for_timeout(500)
+        raise RuntimeError("chatgpt: adjunto siguió mostrando carga durante 120 segundos")
+
+    def _counts(self):
+        return {
+            selector: self.page.locator(selector).count()
+            for selector in self.response_selectors
+        }
+
+    def _is_generating(self):
+        button = self.page.get_by_role("button", name=self.stop_pattern)
+        return button.count() > 0 and button.first.is_visible()
 
     def _send_prompt(self, prompt):
-        assistant_messages = self.page.locator('[data-message-author-role="assistant"]')
-        previous_count = assistant_messages.count()
+        before = self._counts()
+        self.log_callback(f"chatgpt: respuestas antes del envío={before}")
         prompt_box = wait_for_chatgpt_prompt(self.page)
-
         prompt_box.fill(prompt)
+        self.log_callback("chatgpt: prompt escrito en el editor")
         prompt_box.press("Enter")
+        self.log_callback("chatgpt: Enter pulsado; esperando confirmación de envío")
 
-        deadline = time.monotonic() + 240
+        deadline = time.monotonic() + 480  # Máximo, no espera fija.
+        last_report = 0
+        last_text = ""
+        stable_since = None
+        generation_seen = False
+        message_sent = False
+        selected = None
 
         while time.monotonic() < deadline:
-            current_count = assistant_messages.count()
+            now = time.monotonic()
+            try:
+                editor_text = prompt_box.inner_text(timeout=1000).strip()
+            except Exception:
+                try:
+                    editor_text = prompt_box.input_value(timeout=1000).strip()
+                except Exception:
+                    editor_text = None
 
-            if current_count > previous_count:
-                return self._wait_for_final_response(assistant_messages.last, deadline)
+            if not message_sent and editor_text == "":
+                message_sent = True
+                self.log_callback("chatgpt: editor vacío después de Enter; envío probable")
+
+            generating = self._is_generating()
+            if generating and not generation_seen:
+                generation_seen = True
+                self.log_callback("chatgpt: detectado botón detener; generación iniciada")
+
+            counts = self._counts()
+            for selector in self.response_selectors:
+                count = counts[selector]
+                if count <= before[selector]:
+                    continue
+                try:
+                    candidate = self.page.locator(selector).last.inner_text(timeout=1000).strip()
+                except Exception:
+                    continue
+                if not candidate:
+                    continue
+                if selected != selector:
+                    selected = selector
+                    self.log_callback(f"chatgpt: texto de respuesta localizado; selector={selector}")
+                if candidate != last_text:
+                    last_text = candidate
+                    stable_since = now
+                # Esperar finalización observable; si no hay botón detener,
+                # usar estabilidad como aproximación conservadora.
+                quiet_seconds = 3 if generation_seen else 10
+                if (
+                    message_sent
+                    and stable_since is not None
+                    and not generating
+                    and now - stable_since >= quiet_seconds
+                ):
+                    self.log_callback(
+                        f"chatgpt: respuesta estable; segundos={quiet_seconds}; "
+                        f"selector={selector}; caracteres={len(candidate)}"
+                    )
+                    return candidate
+                break
+
+            if now - last_report >= 10:
+                self.log_callback(
+                    f"chatgpt: esperando; transcurridos={int(480 - (deadline - now))}s; "
+                    f"envio_probable={message_sent}; generando={generating}; "
+                    f"respuesta_detectada={bool(last_text)}; conteos={counts}"
+                )
+                last_report = now
 
             self.page.wait_for_timeout(500)
 
-        raise RuntimeError("chatgpt no inició una respuesta dentro del tiempo esperado")
-
-    def _wait_for_final_response(self, message, deadline):
-        stop_pattern = re.compile(
-            r"stop|detener|parar|cancel generation|detener generación",
-            re.IGNORECASE,
+        raise RuntimeError(
+            "chatgpt: tiempo máximo de 480s superado; "
+            f"envio_probable={message_sent}; respuesta_detectada={bool(last_text)}; "
+            f"conteos={self._counts()}"
         )
-        last_text = ""
-        stable_checks = 0
-
-        while time.monotonic() < deadline:
-            try:
-                text = message.inner_text(timeout=5000).strip()
-            except Exception:
-                text = ""
-
-            is_generating = False
-            stop_button = self.page.get_by_role("button", name=stop_pattern)
-
-            if stop_button.count() > 0:
-                try:
-                    is_generating = stop_button.first.is_visible()
-                except Exception:
-                    is_generating = False
-
-            if text and text == last_text and not is_generating:
-                stable_checks += 1
-            else:
-                stable_checks = 0
-
-            if stable_checks >= 3:
-                return text
-
-            last_text = text
-            self.page.wait_for_timeout(1000)
-
-        raise RuntimeError("chatgpt no terminó la respuesta dentro del tiempo esperado")

@@ -10,10 +10,12 @@ from rda.chatgpt_ui import wait_for_chatgpt_prompt
 class chatgpt_client:
     # Los selectores pueden cambiar entre versiones de la interfaz.
     response_selectors = (
+        # Identificados en el DOM inspeccionado de ChatGPT.
+        '[data-turn-key$=":assistant"] [data-markdown-style="assistant-message"]',
+        '[data-turn-key$=":assistant"] [data-dil-message-id]',
+        # Compatibilidad con variantes anteriores de la interfaz.
         '[data-message-author-role="assistant"]',
         '[data-testid^="conversation-turn"] .markdown',
-        'main .markdown',
-        'main .prose',
     )
     stop_pattern = re.compile(
         r"stop|detener|parar|cancel generation|detener generación",
@@ -122,7 +124,9 @@ class chatgpt_client:
 
     def _send_prompt(self, prompt):
         before = self._counts()
+        before_user_turns = self.page.locator('[data-turn-key$=":user"]').count()
         self.log_callback(f"chatgpt: respuestas antes del envío={before}")
+        self.log_callback(f"chatgpt: turnos usuario antes del envío={before_user_turns}")
         prompt_box = wait_for_chatgpt_prompt(self.page)
         prompt_box.fill(prompt)
         self.log_callback("chatgpt: prompt escrito en el editor")
@@ -147,9 +151,14 @@ class chatgpt_client:
                 except Exception:
                     editor_text = None
 
-            if not message_sent and editor_text == "":
+            user_turns = self.page.locator('[data-turn-key$=":user"]').count()
+            if not message_sent and user_turns > before_user_turns:
                 message_sent = True
-                self.log_callback("chatgpt: editor vacío después de Enter; envío probable")
+                self.log_callback("chatgpt: nuevo turno de usuario detectado; envío confirmado en DOM")
+            elif not message_sent and editor_text == "":
+                # Señal provisional; se confirma después con el turno de usuario.
+                self.log_callback("chatgpt: editor vacío tras Enter; comprobando turno enviado")
+                message_sent = True
 
             generating = self._is_generating()
             if generating and not generation_seen:
@@ -173,18 +182,29 @@ class chatgpt_client:
                 if candidate != last_text:
                     last_text = candidate
                     stable_since = now
-                # Esperar finalización observable; si no hay botón detener,
-                # usar estabilidad como aproximación conservadora.
-                quiet_seconds = 3 if generation_seen else 10
+                # La captura real mostró data-turn-state="complete" en el
+                # contenedor del turno. Priorizar esa señal de finalización.
+                complete = False
+                if selector.startswith('[data-turn-key'):
+                    complete = self.page.locator(
+                        '[data-turn-state="complete"] '
+                        '[data-turn-key$=":assistant"] '
+                        '[data-markdown-style="assistant-message"]'
+                    ).count() > 0
+
+                # También exigir estabilidad: un turno puede marcarse completo
+                # durante ajustes finales del renderizado.
+                quiet_seconds = 2 if complete else (3 if generation_seen else 10)
                 if (
-                    message_sent
+                    (message_sent or user_turns > before_user_turns)
                     and stable_since is not None
                     and not generating
                     and now - stable_since >= quiet_seconds
                 ):
                     self.log_callback(
                         f"chatgpt: respuesta estable; segundos={quiet_seconds}; "
-                        f"selector={selector}; caracteres={len(candidate)}"
+                        f"selector={selector}; turno_complete={complete}; "
+                        f"caracteres={len(candidate)}"
                     )
                     return candidate
                 break
@@ -192,7 +212,8 @@ class chatgpt_client:
             if now - last_report >= 10:
                 self.log_callback(
                     f"chatgpt: esperando; transcurridos={int(480 - (deadline - now))}s; "
-                    f"envio_probable={message_sent}; generando={generating}; "
+                    f"envio_probable={message_sent}; turnos_usuario={user_turns}; "
+                    f"generando={generating}; "
                     f"respuesta_detectada={bool(last_text)}; conteos={counts}"
                 )
                 last_report = now

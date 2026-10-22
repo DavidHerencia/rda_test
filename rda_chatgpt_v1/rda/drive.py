@@ -27,6 +27,9 @@ class drive_client:
             download = self._download_from_preview(page)
             file_path = row_dir / self._safe_file_name(download.suggested_filename)
             download.save_as(str(file_path))
+            if not file_path.is_file() or file_path.stat().st_size == 0:
+                raise RuntimeError("descarga vacía o archivo inexistente")
+            self.log_callback(f"fila {row_number}: archivo guardado; bytes={file_path.stat().st_size}")
             return file_path
         finally:
             try:
@@ -63,8 +66,11 @@ class drive_client:
 
                         return download_info.value
                     except PlaywrightTimeoutError:
+                        self.log_callback("drive: clic sin evento de descarga")
                         continue
-                    except Exception:
+                    except Exception as exc:
+                        # No registrar URLs o rutas de los archivos.
+                        self.log_callback(f"drive: fallo en clic; tipo={type(exc).__name__}")
                         continue
 
             page.wait_for_timeout(500)

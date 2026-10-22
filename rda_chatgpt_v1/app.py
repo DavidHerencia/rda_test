@@ -177,7 +177,7 @@ class rda_app:
                     workflow_runner.run()
                     self._append_log("ejecución terminada")
             except Exception as exc:
-                self._append_log(f"error general {type(exc).__name__}")
+                self._append_log(f"error general {type(exc).__name__}; revisa el mensaje emergente")
                 self.root.after(
                     0,
                     lambda: messagebox.showerror("RDA", str(exc)),

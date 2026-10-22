@@ -19,10 +19,14 @@ class chatgpt_client:
 
     def ask_file(self, file_path, prompt, row_number):
         self.session_manager.ensure_chatgpt_session(self.page)
+        self.log_callback(f"fila {row_number}: abriendo nuevo chat")
         self._start_new_chat()
+        self.log_callback(f"fila {row_number}: subiendo adjunto")
         self._upload_file(file_path)
         self.log_callback(f"fila {row_number}: archivo adjuntado en chatgpt")
+        self.log_callback(f"fila {row_number}: enviando pregunta")
         response = self._send_prompt(prompt)
+        self.log_callback(f"fila {row_number}: respuesta recibida; caracteres={len(response)}")
         return response
 
     def _start_new_chat(self):
@@ -59,6 +63,8 @@ class chatgpt_client:
                 timeout=30000,
             )
         except PlaywrightTimeoutError:
+            # La interfaz no siempre muestra el nombre del adjunto.
+            self.log_callback("chatgpt: adjunto no confirmado visualmente")
             self.page.wait_for_timeout(2000)
 
     def _send_prompt(self, prompt):

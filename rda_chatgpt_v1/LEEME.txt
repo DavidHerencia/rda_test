@@ -46,3 +46,10 @@ prueba inicial recomendada
 - usar archivos pequenos y accesibles por la misma cuenta de google
 - usar una columna de salida vacia
 - usar una columna de estado vacia
+
+diagnostico de pruebas
+- cada fila registra etapas de lectura, descarga, chatgpt y escritura
+- los fallos registran detalle y traceback en %%LOCALAPPDATA%%\rda_chatgpt\logs
+- revisar los logs antes de compartirlos: pueden contener datos sensibles
+- probar inicialmente solo la fila 2
+- chrome usa un perfil exclusivo del RDA y no la ventana corporativa abierta

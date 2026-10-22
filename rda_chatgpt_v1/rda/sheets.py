@@ -15,11 +15,16 @@ class sheets_client:
         self.session_manager.ensure_google_session(self.page, self.sheet_url)
         self._select_cell(cell_reference)
 
-        self.page.evaluate("navigator.clipboard.writeText('')")
+        # No borrar el portapapeles del usuario: puede contener datos corporativos.
         self.page.keyboard.press("Control+C")
         self.page.wait_for_timeout(400)
 
-        value = self.page.evaluate("navigator.clipboard.readText()")
+        try:
+            value = self.page.evaluate("navigator.clipboard.readText()")
+        except Exception as exc:
+            raise RuntimeError(
+                f"no se pudo leer el portapapeles en {cell_reference}; tipo={type(exc).__name__}"
+            ) from exc
         return value.strip()
 
     def write_cell(self, cell_reference, value):
@@ -43,7 +48,8 @@ class sheets_client:
     def _select_cell(self, cell_reference):
         target_url = self._build_range_url(cell_reference)
         self.page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
-        self.page.wait_for_timeout(700)
+        # Google Sheets puede tardar en seleccionar la celda del fragmento #range.
+        self.page.wait_for_timeout(1200)
 
     def _build_range_url(self, cell_reference):
         parts = urlsplit(self.sheet_url)
